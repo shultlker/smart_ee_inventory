@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_PYTEST_PATHS = [
     "tests/test_gateway",
+    "tests/test_frontend/test_global_inventory_events.py",
     "tests/test_services/test_epc_binding.py",
     "tests/test_services/test_seed_data.py",
     "tests/test_services/test_inventory_edit.py",

@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from urllib.parse import quote
 
 from nicegui import ui
 
 from frontend.components import navbar
-from frontend.components.asset_confirm import mount_asset_confirm_dialog
 from frontend.components.shelf_grid import count_search_matches, render_shelf_grid
-from frontend.components.presence_confirm import mount_presence_confirm_dialog
 from frontend.constants.bin_status import bin_status_label
 from frontend.services import ApiClient
-from frontend.services.event_listener import EventBusListener
-from shared.constants import EventType
+from frontend.services.global_inventory_events import ensure_global_inventory_events
 
 _OPERATION_LABELS = {
     "take_out": "取出",
@@ -47,9 +43,9 @@ def _short_epc(epc: str, head: int = 12, tail: int = 6) -> str:
 
 @ui.page("/")
 async def dashboard_page() -> None:
-    navbar()
-
     client = ApiClient()
+    navbar(client=client)
+    hub = ensure_global_inventory_events(client)
     cabinet_options: dict[str, int] = {}
 
     shelf_data: dict = {"bin": None, "slots": [], "error": None, "empty": False, "snapshot": None}
@@ -62,93 +58,11 @@ async def dashboard_page() -> None:
     total_count = 0
     ops_bootstrapped = {"done": False}
     recent_live_op_ids: dict[int, float] = {}
-    unbound_state: dict = {
-        "dismissed_epcs": set(),
-        "prompted_at": {},
-        "dialog_open": False,
-        "pending_epc": "",
-        "pending_rssi": None,
-    }
 
     async def refresh_after_confirm() -> None:
         await load_shelf()
         await load_bin_table()
         await load_assets()
-
-    presence_confirm = mount_presence_confirm_dialog(client, on_confirmed=refresh_after_confirm)
-    asset_confirm = mount_asset_confirm_dialog(client, on_confirmed=refresh_after_confirm)
-
-    new_tag_dialog = ui.dialog()
-
-    def _on_new_tag_dialog_hide() -> None:
-        unbound_state["dialog_open"] = False
-
-    new_tag_dialog.on("hide", _on_new_tag_dialog_hide)
-
-    with new_tag_dialog, ui.card().classes("p-4 w-full max-w-md"):
-        new_tag_title = ui.label("检测到未登记标签").classes("text-h6")
-        new_tag_short = ui.label("").classes("text-subtitle1 text-primary")
-        new_tag_epc = ui.label("").classes("text-caption font-mono text-grey q-mb-xs")
-        new_tag_rssi = ui.label("").classes("text-caption text-grey")
-        ui.label("该标签尚未入库绑定，是否跳转到入库页面？").classes("text-body2 q-mt-sm q-mb-md")
-        with ui.row().classes("w-full justify-end gap-2"):
-            ui.button("忽略", on_click=lambda: dismiss_unbound_tag()).props("flat")
-
-            def goto_register() -> None:
-                epc = unbound_state["pending_epc"]
-                if not epc:
-                    new_tag_dialog.close()
-                    return
-                rssi = unbound_state["pending_rssi"]
-                unbound_state["dialog_open"] = False
-                new_tag_dialog.close()
-                query = f"epc={quote(epc)}"
-                if rssi is not None:
-                    query += f"&rssi={rssi}"
-                ui.navigate.to(f"/inventory/register?{query}")
-
-            ui.button("入库绑定", icon="nfc", on_click=goto_register).props("color=primary")
-
-    def dismiss_unbound_tag() -> None:
-        epc = unbound_state["pending_epc"]
-        if epc:
-            unbound_state["dismissed_epcs"].add(epc)
-        unbound_state["dialog_open"] = False
-        new_tag_dialog.close()
-
-    def _should_prompt_unbound(epc: str) -> bool:
-        if epc in unbound_state["dismissed_epcs"]:
-            return False
-        last = unbound_state["prompted_at"].get(epc, 0.0)
-        if time.monotonic() - last < 2.0:
-            return False
-        return True
-
-    def maybe_prompt_unbound_tag(
-        epc: str,
-        rssi: int | None,
-        *,
-        cabinet_id: int | None,
-        slot_id: int | None,
-        asset_id: int | None = None,
-    ) -> None:
-        if cabinet_id or slot_id or asset_id:
-            return
-        epc = epc.strip().upper()
-        if not epc or epc == "?":
-            return
-        if not _should_prompt_unbound(epc) or unbound_state["dialog_open"]:
-            return
-        unbound_state["pending_epc"] = epc
-        unbound_state["pending_rssi"] = rssi
-        unbound_state["prompted_at"][epc] = time.monotonic()
-        unbound_state["dialog_open"] = True
-        new_tag_short.set_text(_short_epc(epc))
-        new_tag_epc.set_text(epc)
-        rssi_str = f"{rssi} dBm" if rssi is not None else "—"
-        new_tag_rssi.set_text(f"信号强度: {rssi_str}")
-        new_tag_title.set_text("检测到未登记标签")
-        new_tag_dialog.open()
 
     def _shelf_snapshot(bin_: dict, slots: list[dict]) -> tuple:
         slot_parts = tuple(
@@ -384,40 +298,20 @@ async def dashboard_page() -> None:
         status_label.set_text("● 监听中")
         status_label.classes(remove="text-red", add="text-green")
 
-    async def on_bus_event(event_type: EventType, payload: dict) -> None:
-        if event_type == EventType.TAG_READ:
-            epc = (payload.get("epc") or "").strip()
-            if not epc:
-                return
-            if payload.get("entity_type") == "asset" and payload.get("asset_id"):
-                await asset_confirm["open_for_tag"](payload)
-                return
-            maybe_prompt_unbound_tag(
-                epc,
-                payload.get("rssi"),
-                cabinet_id=payload.get("cabinet_id"),
-                slot_id=payload.get("slot_id"),
-                asset_id=payload.get("asset_id"),
-            )
-            return
+    async def on_inventory_operation_event(payload: dict) -> None:
+        op_id = payload.get("id")
+        if op_id is not None:
+            recent_live_op_ids[op_id] = time.monotonic()
+            seen_op_ids.add(op_id)
+        show_inventory_operation(payload)
+        await load_shelf()
+        await load_bin_table()
+        await load_assets()
 
-        if event_type == EventType.PRESENCE_CONFIRM_REQUIRED:
-            presence_confirm["open_for_operation"](payload)
-            await load_shelf()
-            await load_bin_table()
-            return
-
-        if event_type == EventType.INVENTORY_OPERATION:
-            op_id = payload.get("id")
-            if op_id is not None:
-                recent_live_op_ids[op_id] = time.monotonic()
-                seen_op_ids.add(op_id)
-            show_inventory_operation(payload)
-            await load_shelf()
-            await load_bin_table()
-            await load_assets()
-
-    EventBusListener(on_bus_event).start()
+    hub.on_confirmed("dashboard", refresh_after_confirm)
+    hub.on_inventory_operation("dashboard", on_inventory_operation_event)
+    ui.context.client.on_disconnect(lambda: hub.off_confirmed("dashboard"))
+    ui.context.client.on_disconnect(lambda: hub.off_inventory_operation("dashboard"))
 
     async def load_shelf() -> None:
         if shelf_loading["active"]:
@@ -591,16 +485,6 @@ async def dashboard_page() -> None:
         await load_assets()
         await bootstrap_operations()
 
-    async def poll_pending_operations() -> None:
-        try:
-            pending = await client.get_inventory_operations(limit=10, status="pending")
-        except Exception:
-            return
-        for op in pending:
-            presence_confirm["open_for_operation"](op)
-            break
-
     ui.timer(0.05, initial_load, once=True)
     ui.timer(2.0, poll_inventory_operations)
-    ui.timer(5.0, poll_pending_operations)
     ui.timer(30.0, load_shelf)

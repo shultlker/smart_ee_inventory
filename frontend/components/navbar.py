@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from frontend.services import ApiClient
+from frontend.services.global_inventory_events import ensure_global_inventory_events
+
 _NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("仪表盘", "/", "dashboard"),
     ("料盒管理", "/bins", "inventory_2"),
@@ -58,7 +61,8 @@ def _nav_button(label: str, path: str, icon: str, *, accent: bool = False) -> No
         ).style("text-decoration: none")
 
 
-def navbar() -> None:
+def navbar(*, client: ApiClient | None = None) -> None:
+    ensure_global_inventory_events(client)
     with ui.header().classes(
         "items-center justify-between px-6 py-1 bg-white text-grey-9 "
         "shadow-sm border-b border-grey-3"

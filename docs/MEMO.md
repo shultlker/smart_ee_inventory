@@ -1,7 +1,7 @@
 # 开发备忘录 (Dev Memo)
 
 > **写给未来的 AI / 开发者**：本文档记录项目演进中的关键决策、已踩过的坑、硬件实测数据与待办。  
-> 更新日期：2026-06-30（BOM 分析 / 仪表盘排版 / ESP32 方案草案）  
+> 更新日期：2026-06-30（全页 RFID 弹窗 / BOM / ESP32 方案草案）  
 > 代码版本：smart_ee_inventory v0.1.0
 
 ---
@@ -115,8 +115,9 @@ E28068940000502244813C7D
 | `frontend/pages/inventory_register.py` | 入库绑定；物料按**料号**展示；`bind_type`；`?epc=` 预填 |
 | `frontend/constants/bin_status.py` | 料盒状态中文标签与颜色 |
 | `frontend/services/api_client.py` | httpx 复用连接；`resolve_api_base_url()` |
-| `frontend/services/event_listener.py` | 仪表盘：`TAG_READ` + `INVENTORY_OPERATION` |
-| `frontend/services/rfid_listener.py` | 入库页 RFID 听卡 |
+| `frontend/services/global_inventory_events.py` | **全页 RFID 监听**：`navbar()` 挂载；出入库/借还/未登记标签弹窗 + pending 轮询 |
+| `frontend/services/event_listener.py` | EventBus → NiceGUI 回调（由 global hub 使用） |
+| `frontend/services/rfid_listener.py` | 入库/库存页 TAG_READ 局部订阅（听卡填 EPC） |
 | `scripts/test_rfid_serial.py` | **独立串口测试 CLI**（调试硬件首选） |
 | `scripts/check_rfid_health.py` | 配置 + 串口 + API 一键检查 |
 | `main.py` | NiceGUI 挂载 + uvicorn；端口冲突自动 fallback |
@@ -267,6 +268,25 @@ python scripts/test_rfid_serial.py monitor -p COM11 -d 15
 
 **建议**：演示时等日志出现 `RFID presence watchdog bootstrap finished` 后再移动标签。
 
+### 5.14 全页 RFID 弹窗（global_inventory_events）
+
+**现象**：仅在仪表盘 `/` 能弹出看门狗出库/入库确认；切到 `/inventory` 等页面无反应。
+
+**原因**：`EventBusListener` 原先只在 `dashboard.py` 注册，NiceGUI 切页后旧页 `on_disconnect` 会 **unsubscribe**，事件不再送达 UI。
+
+**修复**（2026-06-30）：
+
+1. 新增 `frontend/services/global_inventory_events.py`：`ensure_global_inventory_events()` 按 **client.id** 单例挂载。
+2. `navbar()` 调用 `ensure_global_inventory_events()`，所有带顶栏页面共享同一 listener。
+3. 弹窗组件：`presence_confirm`（出库/入库）、`asset_confirm`（非标借还）、未登记标签 → register。
+4. 每 5s 轮询 `pending` 操作，避免漏弹窗。
+5. 页面通过 `on_confirmed("page_key", cb)` 注册局部刷新，切页时 `off_confirmed` 清理。
+6. **入库绑定页**：`_is_register_route()` 下不弹未登记对话框；跳转 register 或页内听卡时对 EPC `snooze_unbound_epc()`（默认 1h），避免重复干扰填表。
+
+**测试**：`tests/test_frontend/test_global_inventory_events.py`（Mock NiceGUI，测 EventBus 路由与 snooze）。
+
+---
+
 ### 5.13 出库确认弹窗显示不全
 
 **原因**：NiceGUI 中 `ui.label` / `ui.column` 在 `ui.dialog()` **外**创建，再引用进 card，导致只有部分内容进入弹窗。
@@ -348,8 +368,8 @@ python main.py
 | 格位/料盒状态 | `occupied`（**在库**）/ `checkout_unregistered` / `return_unregistered` / `pending_*` / `checked_out` |
 | **库存操作记录** | `inventory_operations`（`status`: pending/confirmed/cancelled） |
 | **操作记录页** | `/inventory/operations`；`DELETE /inventory/operations` 清空 |
-| 仪表盘 | `PRESENCE_CONFIRM_REQUIRED` 弹窗 + 已确认操作日志 |
-| 未登记标签引导 | 仪表盘弹窗 → `/inventory/register?epc=` |
+| 仪表盘 | `PRESENCE_CONFIRM_REQUIRED` 弹窗 + 已确认操作日志（**任意页面均可弹窗**，仪表盘负责日志展示） |
+| 未登记标签引导 | **全页**弹窗 → `/inventory/register?epc=` |
 | 入库绑定 | `POST /inventory/register`；料盒物料或非标物件 |
 | **BOM 分析** | `POST /boms/preview`、`POST /boms/import`、`GET /boms/{id}/analysis`；演示 CSV：`scripts/demo_bom.csv` |
 
@@ -497,6 +517,7 @@ python scripts/verify_seed.py --strict  # 需本地 inventory.db
 | 2026-06-30 | pytest 扩展至 ~38 例 |
 | 2026-06-30 | **BOM 分析**：`bom_service` + `/api/v1/boms` + `/inventory/bom`；`scripts/demo_bom.csv` |
 | 2026-06-30 | 仪表盘移除右下角重复链接（入库绑定/操作记录/料盒管理），统一顶栏导航 |
+| 2026-06-30 | **全页 RFID**：`global_inventory_events.py` + `navbar` 挂载；修复非仪表盘页无法出入库确认 |
 | 2026-06-30 | 入库绑定页：物料下拉显示元件 **name**（如「红色 LED」）；区块标题去掉序号 |
 | 2026-06-30 | **库存页合并**：`/inventory` 集成标签管理；`/inventory/manage` 重定向；三区折叠列表 + 统计卡片 |
 | 2026-06-30 | 库存页：料盒/非标行内**删除**；标签管理改为表格列表；`PATCH` 手动编辑记入操作记录 |

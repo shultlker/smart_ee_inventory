@@ -3,8 +3,8 @@ from __future__ import annotations
 from nicegui import ui
 
 from frontend.components import navbar
-from frontend.components.presence_confirm import mount_presence_confirm_dialog
 from frontend.services import ApiClient
+from frontend.services.global_inventory_events import ensure_global_inventory_events
 
 _OPERATION_LABELS = {
     "take_out": "出库",
@@ -29,10 +29,10 @@ _ENTITY_LABELS = {
 
 @ui.page("/inventory/operations")
 async def inventory_operations_page() -> None:
-    navbar()
-    ui.label("库存操作记录").classes("text-h5 q-pa-md")
-
     client = ApiClient()
+    navbar(client=client)
+    hub = ensure_global_inventory_events(client)
+    ui.label("库存操作记录").classes("text-h5 q-pa-md")
     filter_status = ui.select(
         {
             "": "全部状态",
@@ -124,7 +124,7 @@ async def inventory_operations_page() -> None:
             row = e.args[1]
             if row.get("status") != "pending":
                 return
-            confirm_state["open_for_operation"](row)
+            hub.open_for_operation(row)
 
         table.on("rowClick", on_row_click)
 
@@ -137,7 +137,8 @@ async def inventory_operations_page() -> None:
     def refresh() -> None:
         table_view.refresh()
 
-    confirm_state = mount_presence_confirm_dialog(client, on_confirmed=refresh)
+    hub.on_confirmed("operations", refresh)
+    ui.context.client.on_disconnect(lambda: hub.off_confirmed("operations"))
 
     clear_dialog = ui.dialog()
 
@@ -154,7 +155,7 @@ async def inventory_operations_page() -> None:
                 ui.notify(f"清空失败: {exc}", type="negative")
                 return
             clear_dialog.close()
-            confirm_state["prompted_ids"].clear()
+            hub.presence_confirm["prompted_ids"].clear()
             ui.notify(f"已清空 {result.get('deleted', 0)} 条记录", type="positive")
             refresh()
 

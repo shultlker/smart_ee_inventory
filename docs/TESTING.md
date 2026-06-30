@@ -12,7 +12,10 @@
 cd D:\smart_ee_inventory
 .\.venv\Scripts\Activate.ps1
 
-# 冒烟测试（网关协议 + 核心服务 + 编辑 API，约 30 秒）
+# 首次或换机：见 docs/DEPENDENCIES.md
+# python -m pip install -U pip && pip install -e ".[dev]"
+
+# 冒烟测试（网关 + 前端 hub + 核心服务，约 1～2 秒）
 python scripts/smoke_test.py
 
 # 全量 pytest
@@ -32,6 +35,7 @@ python scripts/verify_seed.py --strict
 | 目录 | 覆盖组件 |
 |------|----------|
 | `tests/test_gateway/` | YZ-M40 帧解析/组帧、`BoardSimulator` 协议模拟 |
+| `tests/test_frontend/` | 全页 RFID 事件 hub（`global_inventory_events`） |
 | `tests/test_services/` | 看门狗、操作确认、标签管理、BOM、EPC 绑定、种子数据、手动编辑 |
 | `tests/test_api/` | REST API（bins/slots/inventory/assets/boms/rfid 等） |
 | `tests/test_config/` | 网络/配置 |
@@ -48,6 +52,7 @@ python scripts/verify_seed.py --strict
 | `backend/services/bom_service.py` | `test_bom.py`, `test_bom_api.py` |
 | `backend/services/presence_watchdog.py` | `test_presence_watchdog.py` |
 | `backend/services/operation_service.py` | `test_operation_confirm.py`, `test_asset_manual_ops.py` |
+| `frontend/services/global_inventory_events.py` | `test_global_inventory_events.py` |
 | `scripts/seed_data.py` | `test_seed_data.py` |
 
 ---
@@ -62,6 +67,8 @@ python scripts/verify_seed.py --strict
 | `scripts/test_rfid_serial.py` | 真实 YZ-M40 串口：list / version / monitor |
 | `scripts/simulate_rfid_board.py` | **无硬件**：TCP 模拟读卡器（默认 `127.0.0.1:9276`） |
 | `scripts/check_rfid_health.py` | 串口连通 + 被动监听帧统计 |
+
+依赖安装与版本锁定见 [DEPENDENCIES.md](DEPENDENCIES.md)。
 
 ### RFID 模拟器（推荐日常调试）
 
@@ -99,17 +106,18 @@ rfid> emit jetson
 2. **API 层**：在 `db_session` 中 `commit()` 后，用 `TestClient(create_app())` 发请求。
 3. **需要种子数据的 API 测试**：检测无数据时 `pytest.skip("need seed data")`（见 `test_bom_api.py`）。
 4. **网关/协议**：不依赖数据库，纯 bytes 断言。
-5. 运行单文件：`python -m pytest tests/test_services/test_epc_binding.py -v`
+5. **前端 hub**：Mock `nicegui.ui` / `context.client`，测 EventBus 路由与回调注册（见 `test_frontend/`）。
+6. 运行单文件：`python -m pytest tests/test_services/test_epc_binding.py -v`
 
 ---
 
 ## 5. CI / 发布前检查清单
 
-- [ ] `python scripts/smoke_test.py`
-- [ ] `python -m pytest tests -q`（全量）
+- [ ] `python scripts/smoke_test.py`（含 `test_frontend`，约 **35 例 / 1s**）
+- [ ] `python -m pytest tests -q`（全量，约 **78 例**）
 - [ ] 若改动种子： `python scripts/init_db.py --drop` + `python scripts/verify_seed.py --strict`
-- [ ] 若改动 RFID： `python -m pytest tests/test_gateway -q`
-- [ ] 手动：模拟器 + 仪表盘看门狗 / 非标借还各走一遍
+- [ ] 若改动 RFID： `python -m pytest tests/test_gateway tests/test_frontend -q`
+- [ ] 手动：模拟器 + **任意页面**（如 `/inventory`）看门狗 / 非标借还各走一遍
 
 ---
 

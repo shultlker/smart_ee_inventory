@@ -6,6 +6,7 @@ from nicegui import ui
 
 from frontend.components import navbar
 from frontend.services import ApiClient
+from frontend.services.global_inventory_events import ensure_global_inventory_events
 from frontend.services.rfid_listener import RfidEventListener
 
 
@@ -33,6 +34,9 @@ async def inventory_register_page(epc: str = "", rssi: str = "", bind_type: str 
     ui.label("新建库存 · RFID 绑定").classes("text-h5 q-pa-md")
 
     client = ApiClient()
+    hub = ensure_global_inventory_events(client)
+    if prefilled_epc:
+        hub.snooze_unbound_epc(prefilled_epc)
     refs: dict = {}
     ctx: dict = {
         "bin_options": {},
@@ -80,6 +84,7 @@ async def inventory_register_page(epc: str = "", rssi: str = "", bind_type: str 
     def capture_tag(epc: str, rssi: int | None) -> None:
         epc = epc.strip().upper()
         state["listening"] = False
+        hub.snooze_unbound_epc(epc)
         apply_epc_to_form(epc, rssi)
         ui.notify(f"已读取标签: {_short_epc(epc)}", type="positive")
 

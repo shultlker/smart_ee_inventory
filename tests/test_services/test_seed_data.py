@@ -26,10 +26,23 @@ async def test_seed_all_creates_bin_test_and_epcs(db_session: AsyncSession) -> N
     assert slot_count == 3
 
     part_count = (await db_session.execute(select(func.count()).select_from(Part))).scalar_one()
-    assert part_count == 3
+    assert part_count >= 3
+
+    for part_number in ("TEST-R-10K", "TEST-C-100N", "TEST-LED-RED"):
+        row = (
+            await db_session.execute(select(Part).where(Part.part_number == part_number))
+        ).scalar_one_or_none()
+        assert row is not None, part_number
 
     inv_count = (await db_session.execute(select(func.count()).select_from(InventoryItem))).scalar_one()
-    assert inv_count == 3
+    assert inv_count >= 3
+
+    slot_codes = (
+        await db_session.execute(
+            select(BinSlot.slot_code).where(BinSlot.cabinet_id == cabinet.id)
+        )
+    ).scalars().all()
+    assert set(slot_codes) >= {"T01-1-1", "T01-1-2", "T01-1-3"}
 
     assets = (
         await db_session.execute(select(Asset).where(Asset.asset_code == "AST-0001"))

@@ -9,10 +9,28 @@
 | 硬件通信层 | Python + **pyserial** | USB 串口读写、YZ-M40 二进制帧解析 |
 | 后端 API | **FastAPI** + **Uvicorn** | RESTful CRUD、WebSocket 实时推送 |
 | 数据库 | **SQLite** + SQLAlchemy (async) | 物料、格位、库存、操作记录、BOM、RFID 事件 |
-| 前端 UI | **NiceGUI** | 仪表盘、料盒/格位/库存（与 FastAPI 同进程） |
+| 前端 UI | **NiceGUI** | 仪表盘、料盒/格位/库存（与 FastAPI 同进程）；**全页全局 RFID 弹窗** |
 | 配置 | pydantic-settings + `.env` | 端口、串口、数据库路径等 |
 
-> 前端框架为 [NiceGUI](https://nicegui.io/)，基于 FastAPI + WebSocket，通过 `ui.run_with(app)` + `uvicorn.run()` 挂载。
+### 直接依赖（实测版本 · Python 3.11.5）
+
+| 包 | 版本 | 说明 |
+|----|------|------|
+| fastapi | 0.138.1 | REST / WebSocket API |
+| uvicorn[standard] | 0.49.0 | ASGI 服务 |
+| nicegui | 3.13.0 | Web UI |
+| sqlalchemy | 2.0.51 | ORM（异步 + greenlet） |
+| aiosqlite | 0.22.1 | SQLite 驱动 |
+| pydantic / pydantic-settings | 2.13.4 / 2.14.2 | 模型与配置 |
+| pyserial | 3.5 | RFID 串口 |
+| httpx | 0.28.1 | 前端 HTTP 客户端 |
+| python-dotenv | 1.2.2 | `.env` 加载 |
+
+开发：`pytest` 9.1.1 · `pytest-asyncio` 1.4.0 · `ruff` 0.15.20  
+
+完整说明、传递依赖与锁定安装见 **[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)**。
+
+> 前端 [NiceGUI](https://nicegui.io/) 与 FastAPI 同进程：`ui.run_with(app)` + `uvicorn.run()`。
 
 ## 架构
 
@@ -36,14 +54,33 @@
 
 ## 快速开始
 
+### 环境要求
+
+- **Python 3.11+**（推荐 3.11 或 3.12）
+- **pip** 23+（安装 editable 包需 **hatchling**，会自动拉取）
+
+### 安装依赖
+
 ```powershell
-# 1. 创建虚拟环境
+# 1. 创建并激活虚拟环境
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 2. 安装依赖
+# 2. 升级 pip 并安装项目（含 pytest / ruff）
+python -m pip install -U pip
 pip install -e ".[dev]"
 
+# 仅运行 Web 服务、不跑测试时可改为：
+# pip install -e .
+```
+
+Linux / macOS 将激活命令改为 `source .venv/bin/activate`。
+
+**锁定版本安装**（与开发机一致）：见 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) 与根目录 `requirements-lock.txt`。
+
+### 配置与启动
+
+```powershell
 # 3. 配置环境变量
 Copy-Item .env.example .env
 # 编辑 .env（见下方「RFID 硬件」）
@@ -53,6 +90,13 @@ python scripts/init_db.py
 
 # 5. 启动服务
 python main.py
+```
+
+**验证安装**（可选）：
+
+```powershell
+python -c "import fastapi, nicegui, sqlalchemy, serial; print('dependencies OK')"
+python scripts/smoke_test.py
 ```
 
 **访问地址**
@@ -104,16 +148,18 @@ APP_PORT=8765
 
 ### 看门狗演示（已绑定标签）
 
-1. 启动 `main.py`，打开仪表盘 `/`，选择 `BIN-TEST`
+1. 启动 `main.py`，打开任意页面（如 `/` 或 `/inventory`），仪表盘可选 `BIN-TEST`
 2. 将种子标签**拿离**读卡区 → 弹出**出库确认**（使用人、使用项目）→ 确认后库存 -1，格位 `checked_out`
 3. 将标签**放回**读卡区 → 弹出**入库归还**（可填消耗数量）→ 确认后库存按 `+1 - 消耗` 调整
 4. 未登记标签靠近 → 弹窗「跳转入库绑定」→ `/inventory/register?epc=...`
 
-> **非标物件**不进料盒格位，**不使用看门狗**。在仪表盘读卡后弹出**借出/归还**对话框；左栏下半区可查看全部非标物件列表。
+> **出入库/借还弹窗**由顶栏 `navbar()` 挂载的 **全局 EventBus 监听**驱动，在库存、BOM、入库绑定等**任意页面**均可响应，不仅限于仪表盘。
+
+> **非标物件**不进料盒格位，**不使用看门狗**。读卡后弹出**借出/归还**对话框；仪表盘左栏下半区可查看全部非标物件列表。
 
 ### 非标物件借还（读卡弹窗）
 
-1. 打开仪表盘 `/`，将已登记的非标物件标签靠近读卡器
+1. 打开任意带顶栏的页面，将已登记的非标物件标签靠近读卡器
 2. **在库** → 弹出借出对话框，填写使用人、使用项目后确认
 3. **已借出** → 弹出归还对话框，确认后入库
 
@@ -228,7 +274,8 @@ python scripts/init_db.py --drop     # 清空重建
 
 | 路径 | 功能 |
 |------|------|
-| `/` | **仪表盘**：左=料盒货柜 + 非标物件；右=统计/料盒表/操作日志；格位看门狗 + **非标读卡弹窗** |
+| `/` | **仪表盘**：左=料盒货柜 + 非标物件；右=统计/料盒表/操作日志 |
+| 任意页 | **全局 RFID**：看门狗出库/入库确认、非标借还、未登记标签引导（经 `navbar` 挂载） |
 | `/bins` | 新建/编辑/删除料盒，料盒级 EPC 绑定 |
 | `/slots` | 选择料盒 → 行列格位网格 → 编辑格位 EPC |
 | `/inventory` | **库存与标签**：统计卡片；料盒物料/非标物件/标签管理三区折叠列表；行内编辑与删除；标签绑定/换绑/解绑 |
@@ -261,6 +308,7 @@ smart_ee_inventory/
 │   └── services/
 │       ├── api_client.py
 │       ├── event_listener.py
+│       ├── global_inventory_events.py  # 全页 RFID：出入库/借还/未登记标签
 │       └── rfid_listener.py
 ├── scripts/
 │   ├── init_db.py
@@ -273,6 +321,7 @@ smart_ee_inventory/
 │   └── check_rfid_health.py    # 健康检查
 ├── tests/                      # gateway + api + services
 └── docs/
+    ├── DEPENDENCIES.md         # 依赖清单与安装说明
     ├── TESTING.md              # 测试与调试指南
     ├── PROJECT_SUMMARY.md
     └── MEMO.md                 # 开发备忘录（踩坑 / 硬件实测）
@@ -292,6 +341,7 @@ python -m pytest tests -q       # 全量
 
 | 文档 | 说明 |
 |------|------|
+| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | **依赖与安装** — 直接/传递依赖、锁定版本、常见问题 |
 | [docs/TESTING.md](docs/TESTING.md) | **测试与调试** — pytest、模拟器、种子校验 |
 | [docs/MEMO.md](docs/MEMO.md) | **开发备忘录** — 硬件参数、踩坑、看门狗、仪表盘 UI |
 | [docs/PROJECT_SUMMARY.md](docs/PROJECT_SUMMARY.md) | 项目总结与路线图 |

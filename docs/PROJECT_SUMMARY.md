@@ -22,7 +22,7 @@
 
 | 内容 | 说明 |
 |------|------|
-| 技术选型 | pyserial + FastAPI + SQLite + NiceGUI |
+| 技术选型 | pyserial + FastAPI + SQLite + NiceGUI（详见 [DEPENDENCIES.md](DEPENDENCIES.md)） |
 | 目录结构 | `gateway/`、`backend/`、`frontend/`、`config/`、`scripts/`、`tests/` |
 | 依赖管理 | `pyproject.toml`，Python ≥ 3.11 |
 | 应用入口 | `main.py`：`build_app()` 集成 FastAPI + NiceGUI + Gateway 生命周期 |
@@ -228,6 +228,17 @@ uvicorn.run(app, host=..., port=..., reload=settings.debug)
 - 网关就绪后 **bootstrap 5s** 内不判离开、不发出入库事件
 - 未绑定 EPC：仅弹窗引导入库，不改库存
 
+### 2.14 全页 RFID 事件（2026-06-30 续）
+
+| 内容 | 说明 |
+|------|------|
+| **GlobalInventoryEventHub** | `global_inventory_events.py`：每浏览器标签页单例 |
+| **navbar 挂载** | 所有带顶栏页面自动 `ensure_global_inventory_events()` |
+| **弹窗** | 看门狗出库/入库、非标借还、未登记标签引导 |
+| **pending 轮询** | 5s 兜底，防止漏弹待确认操作 |
+| **页面回调** | `on_confirmed("dashboard", …)` 等 keyed 注册，切页 `off_*` 清理 |
+| **测试** | `tests/test_frontend/test_global_inventory_events.py`；冒烟增至 **35 例** |
+
 ### 2.12 BOM 分析与取料（2026-06-30 续）
 
 | 内容 | 说明 |
@@ -257,15 +268,15 @@ uvicorn.run(app, host=..., port=..., reload=settings.debug)
 | **仪表盘双栏 + 货柜搜索** | ✅ |
 | **RFID 低延迟（event_bus + listener）** | ✅ |
 | **单天线看门狗** 待确认出库/入库 | ✅ |
-| **出库/入库确认弹窗**（使用人/项目、消耗） | ✅ |
+| **出库/入库确认弹窗**（使用人/项目、消耗） | ✅ **全页**（navbar 全局 hub） |
 | **双类型库存**（料盒物料 + 非标物件） | ✅ |
 | **操作记录管理页** `/inventory/operations` | ✅ |
 | **标签管理** | bind/rebind/unbind/delete；UI 在 `/inventory` 标签区 | ✅ |
-| **非标物件读卡借还** | ✅ 仪表盘弹窗（已移除 `/inventory/asset-ops` 独立页） |
+| **非标物件读卡借还** | ✅ **全页**弹窗（已移除 `/inventory/asset-ops` 独立页） |
 | **料盒状态** 出库未登记 / 已出库 | ✅ |
 | **库存操作记录** API（含 confirm/cancel/clear） | ✅ |
 | **仪表盘操作日志**（仅已确认记录） | ✅ |
-| **未登记标签 → 入库绑定** | ✅ 仪表盘弹窗跳转 |
+| **未登记标签 → 入库绑定** | ✅ **全页**弹窗跳转 |
 | **BOM 分析** CSV 导入/预览/格位定位 + `/inventory/bom` | ✅ |
 | 物料列表/创建 `/api/v1/components` | ✅ |
 | 分类列表 `/api/v1/categories` | ✅ |
@@ -276,7 +287,7 @@ uvicorn.run(app, host=..., port=..., reload=settings.debug)
 | WebSocket 广播 `/ws/bin-status` | ✅ `tag_read` + `inventory_operation` |
 | RFID 串口测试脚本 | ✅ 已实测 |
 | 完整数据库模型 + 演示数据 | ✅ |
-| 单元/API 测试 | ✅ ~45 例；见 `docs/TESTING.md` |
+| 单元/API/前端 hub 测试 | ✅ ~**78** 例；见 `docs/TESTING.md` |
 
 ### ⚠️ 部分可用 / 骨架级
 
@@ -286,7 +297,7 @@ uvicorn.run(app, host=..., port=..., reload=settings.debug)
 | 非标物件 | **手动读卡**借还；不进料盒、不看门狗 |
 | 格位管理 | 含 `pending_*` / `checked_out` / 料盒 `checkout_unregistered` |
 | 库存管理 | 看门狗 + register + **标签管理** + 删除库存 |
-| 前端实时性 | 进程内 `EventBusListener`；HTTP 2s 兜底 |
+| 前端实时性 | 进程内 `GlobalInventoryEventHub` + 页面 keyed 回调；HTTP 2s 兜底（仪表盘操作日志） |
 | NiceGUI 页面加载 | 必须用 timer 异步拉 API |
 | 种子 EPC | 演示 `BIN-TEST` 三格；与用户真实标签需手动对齐 |
 
@@ -320,10 +331,10 @@ uvicorn.run(app, host=..., port=..., reload=settings.debug)
                     │          → rfid_events 异步入库          │
                     └──────────┬───────────────┬──────────────┘
                                │               │
-              ┌────────────────▼──────┐  ┌─────▼──────────────┐
-              │ EventBusListener      │  │ ws/bin-status      │
-              │ 确认弹窗 + 操作日志 ✅  │  │ WebSocket          │
-              └───────────────────────┘  └────────────────────┘
+              ┌────────────────▼──────────────────────────────┐
+              │ GlobalInventoryEventHub（navbar 全页挂载）✅   │
+              │ 确认弹窗 + pending 轮询 + 页面刷新回调       │
+              └─────────────────────────────────────────────┘
                                │
               ┌────────────────▼──────────────────────────────┐
               │ dashboard：左货柜网格 │ 右：统计+料盒+操作日志 ✅ │
@@ -389,9 +400,9 @@ python main.py
 4. 先测串口：`python scripts/test_rfid_serial.py monitor -p COM11 -d 10`
 5. 再启主程序：`python main.py`（勿与测试脚本同时占 COM）
 6. 格位物料 EPC 绑定后，看门狗会对**料盒格位**自动待确认出库/入库
-7. **非标物件**在仪表盘读卡 → 弹窗借出/归还
+7. **非标物件**在任意页面读卡 → 弹窗借出/归还
 8. `/inventory` 可编辑/删除库存，标签区可换绑、解绑、删除
-9. 未登记标签在仪表盘弹窗 → **入库绑定**（EPC 自动预填）
+9. 未登记标签在**任意页面**弹窗 → **入库绑定**（EPC 自动预填）
 
 ### 看门狗演示脚本（约 5 分钟）
 
@@ -454,8 +465,9 @@ python main.py
 | `frontend/pages/dashboard.py` | 双栏仪表盘 + 操作记录 + 未登记弹窗 |
 | `frontend/pages/` | dashboard / bins / slots / inventory / bom / register / operations |
 | `frontend/services/api_client.py` | HTTP 客户端 |
-| `frontend/services/event_listener.py` | event_bus 多事件订阅 |
-| `frontend/services/rfid_listener.py` | 入库页 RFID 听卡 |
+| `frontend/services/global_inventory_events.py` | 全页 RFID EventBus + 确认弹窗 |
+| `frontend/services/event_listener.py` | EventBus 订阅基类 |
+| `frontend/services/rfid_listener.py` | 入库/库存页 TAG_READ 听卡 |
 | `gateway/protocol/frames.py` | YZ-M40 帧解析 / 组帧 |
 | `gateway/board_simulator.py` | RFID 开发板协议模拟（测试 + debug CLI 共用） |
 | `scripts/init_db.py` | 数据库初始化 |

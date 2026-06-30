@@ -1,0 +1,6 @@
+# Direct dev dependencies — pinned alongside requirements-lock.txt
+# Install after runtime lock: pip install -r requirements-dev-lock.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.15.20
