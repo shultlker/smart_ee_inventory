@@ -1,0 +1,6 @@
+bom_code,bom_name,version
+DEMO-BOM-001,演示装配板卡,1.0
+part_number,quantity,designators,note
+TEST-R-10K,10,R1;R2;R3,主电路电阻
+TEST-C-100N,5,C1;C2,滤波电容
+TEST-LED-RED,3,D1;D2;D3,状态指示灯
