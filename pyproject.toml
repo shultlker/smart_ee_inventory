@@ -18,10 +18,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 版本与 requirements-dev-lock.txt 对齐，避免 pip 在 ruff 上反复回溯下载
 dev = [
-    "pytest>=8.3.0",
-    "pytest-asyncio>=0.24.0",
-    "ruff>=0.8.0",
+    "pytest>=8.3.0,<10",
+    "pytest-asyncio>=0.24.0,<2",
+    "ruff>=0.15.0,<0.16",
 ]
 
 [project.scripts]

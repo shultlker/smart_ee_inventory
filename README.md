@@ -68,10 +68,13 @@ python -m venv .venv
 
 # 2. 升级 pip 并安装项目（含 pytest / ruff）
 python -m pip install -U pip
-pip install -e ".[dev]"
+pip install -e .
 
-# 仅运行 Web 服务、不跑测试时可改为：
-# pip install -e .
+# 仅在本机开发、需要跑测试 / ruff 时再装（其它 PC 部署可跳过）：
+# pip install -r requirements-dev-lock.txt
+
+# 若仍习惯一条命令装 dev，也可（已收窄 ruff 版本范围，不再从 0.8 回溯）：
+# pip install -e ".[dev]"
 ```
 
 Linux / macOS 将激活命令改为 `source .venv/bin/activate`。

@@ -42,10 +42,20 @@ pip install -e ".[dev]"
 - `[dev]`：额外安装 pytest、pytest-asyncio、ruff。
 - 配置见 `.env.example` → 复制为 `.env`。
 
-**仅运行（不跑测试 / lint）**：
+**仅运行（不跑测试 / lint）** — **其它 PC 部署请用这一条**：
 
 ```powershell
 pip install -e .
+# 或锁定版本：
+# pip install -r requirements-lock.txt && pip install -e . --no-deps
+```
+
+**开发机需要测试 / ruff 时**再装 dev（建议用锁定文件，避免 pip 反复试 ruff 版本）：
+
+```powershell
+pip install -e .
+pip install -r requirements-dev-lock.txt
+# 等价于 pip install -e ".[dev]"，但版本固定、解析更快
 ```
 
 ---
@@ -71,9 +81,11 @@ pip install -e .
 
 | 包名 | 声明约束 | 实测版本 | 用途 |
 |------|----------|----------|------|
-| **pytest** | ≥8.3.0 | 9.1.1 | 单元 / API 测试 |
-| **pytest-asyncio** | ≥0.24.0 | 1.4.0 | 异步测试 |
-| **ruff** | ≥0.8.0 | 0.15.20 | 代码检查 |
+| **pytest** | ≥8.3.0, &lt;10 | 9.1.1 | 单元 / API 测试 |
+| **pytest-asyncio** | ≥0.24.0, &lt;2 | 1.4.0 | 异步测试 |
+| **ruff** | **≥0.15.0, &lt;0.16** | 0.15.20 | 代码检查 |
+
+> 旧版 `ruff>=0.8.0` 会让 pip 在 0.8～0.15 间大量回溯试装。**其它 PC 部署运行服务时不要装 `[dev]`**（见 §2）。
 
 ---
 
@@ -147,6 +159,7 @@ pip show smart-ee-inventory
 
 | 现象 | 处理 |
 |------|------|
+| **`pip install -e ".[dev]"` 反复下载 ruff** | **部署机改用 `pip install -e .`**；开发机先 `pip install -U pip`，再用 `pip install -r requirements-dev-lock.txt` 代替宽泛的 `[dev]` |
 | `pip install -e ".[dev]"` 报 hatchling 错误 | 先 `pip install -U pip hatchling`，再重试 |
 | PowerShell 无法执行 Activate | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | `import serial` 失败 | 确认安装的是 **pyserial**（`pip install pyserial`），不是名为 `serial` 的其他包 |
